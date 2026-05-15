@@ -2,10 +2,12 @@ import {
 	SCENE_WIDTH,
 	STAGE_MID_POINT,
 	STAGE_PADDING,
-} from '../constants/Stage.js';
+} from '../constants/stage.js';
 import {
 	FighterAttackBaseData,
+	FighterAttackType,
 	FighterAttackStrength,
+	FighterHurtArea,
 	FighterId,
 	FighterState,
 	FighterStruckDelay,
@@ -13,6 +15,7 @@ import {
 import { FRAME_TIME, GAME_SPEED } from '../constants/game.js';
 import { Camera } from '../engine/Camera.js';
 import { EntityList } from '../engine/EntityList.js';
+import { MathQuizController } from '../engine/MathQuizController.js';
 import { Ken, Ryu } from '../entitites/fighters/index.js';
 import {
 	HeavyHitSplash,
@@ -36,6 +39,7 @@ export class BattleScene {
 	hurtTimer = 0;
 	battleEnded = false;
 	winnerId = undefined;
+	mathQuiz = undefined;
 
 	constructor(changeScene) {
 		this.changeScene = changeScene;
@@ -47,6 +51,11 @@ export class BattleScene {
 		];
 		resetGameState();
 		this.startRound();
+		this.mathQuiz = new MathQuizController({
+			onCorrect: this.handleCorrectAnswer,
+			onWrong: this.handleWrongAnswer,
+			onTimeout: this.handleTimeoutAnswer,
+		});
 	}
 
 	getFighterClass = (id) => {
@@ -121,6 +130,55 @@ export class BattleScene {
 		this.hurtTimer = time.previous + FighterStruckDelay * FRAME_TIME;
 	};
 
+	getMathAttackStrength = (question) => {
+		if (question.digits >= 4) return FighterAttackStrength.HEAVY;
+		if (question.digits >= 2) return FighterAttackStrength.MEDIUM;
+		return FighterAttackStrength.LIGHT;
+	};
+
+	triggerMathAttack = (time, attackerId, question) => {
+		if (this.battleEnded) return;
+
+		const defenderId = 1 - attackerId;
+		const attacker = this.fighters[attackerId];
+		const defender = this.fighters[defenderId];
+		const strength = this.getMathAttackStrength(question);
+
+		if (!attacker || !defender) return;
+
+		attacker.attackStruck = false;
+		defender.attackStruck = false;
+
+		if (attacker.states[FighterState.MEDIUM_PUNCH].validFrom.includes(attacker.currentState)) {
+			attacker.changeState(FighterState.MEDIUM_PUNCH, time);
+		}
+
+		const hitPosition = {
+			x: (attacker.position.x + defender.position.x) / 2,
+			y: Math.min(attacker.position.y, defender.position.y) - 54,
+		};
+
+		defender.handleAttackHit(
+			time,
+			strength,
+			FighterHurtArea.BODY,
+			FighterAttackType.PUNCH,
+			hitPosition
+		);
+	};
+
+	handleCorrectAnswer = (time, question) => {
+		this.triggerMathAttack(time, 0, question);
+	};
+
+	handleWrongAnswer = (time, question) => {
+		this.triggerMathAttack(time, 1, question);
+	};
+
+	handleTimeoutAnswer = (time, question) => {
+		this.triggerMathAttack(time, 1, question);
+	};
+
 	updateShadows = (time) => {
 		this.shadows.map((shadow) => shadow.update(time));
 	};
@@ -137,6 +195,8 @@ export class BattleScene {
 	};
 
 	goToStartScene = () => {
+		this.mathQuiz?.destroy();
+		this.mathQuiz = undefined;
 		setTimeout(() => {
 			this.changeScene(StartScene);
 		}, 6000);
@@ -161,6 +221,7 @@ export class BattleScene {
 
 	updateOverlays = (time) => {
 		this.overlays.map((overlay) => overlay.update(time));
+		this.mathQuiz?.update(time);
 	};
 
 	updateFighterHP = (time) => {
