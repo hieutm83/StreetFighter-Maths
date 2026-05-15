@@ -18,6 +18,14 @@ const challengeTypes = [
 	{ operation: '-', regrouping: false, label: 'Tru khong nho' },
 	{ operation: '-', regrouping: true, label: 'Tru co nho' },
 ];
+const [addSimple, addCarry, subtractSimple, subtractBorrow] = challengeTypes;
+const difficultyProfiles = [
+	{ max: 0.18, digits: [1], types: [addSimple, subtractSimple] },
+	{ max: 0.36, digits: [2], types: [addSimple, subtractSimple] },
+	{ max: 0.55, digits: [2, 3], types: [addCarry, subtractSimple] },
+	{ max: 0.75, digits: [3], types: challengeTypes },
+	{ max: 1, digits: [4], types: [addCarry, subtractBorrow, addSimple] },
+];
 
 const randomInt = (min, max) =>
 	Math.floor(Math.random() * (max - min + 1)) + min;
@@ -157,10 +165,15 @@ const buildNumberWithoutBorrow = (digits) => {
 	return [Number(leftDigits.join('')), Number(rightDigits.join(''))];
 };
 
-const buildQuestion = () => {
-	const type = challengeTypes[randomInt(0, challengeTypes.length - 1)];
-	const digits =
-		type.operation === '-' && type.regrouping ? randomInt(2, 4) : randomInt(1, 4);
+export const buildQuestion = (difficultyProgress = 0) => {
+	const profile =
+		difficultyProfiles.find(({ max }) => difficultyProgress <= max) ??
+		difficultyProfiles[difficultyProfiles.length - 1];
+	const type = profile.types[randomInt(0, profile.types.length - 1)];
+	const availableDigits = profile.digits.filter(
+		(digits) => !(type.operation === '-' && type.regrouping && digits === 1)
+	);
+	const digits = availableDigits[randomInt(0, availableDigits.length - 1)];
 	const [min, max] = digitRanges[digits];
 	let left = 0;
 	let right = 0;
@@ -192,6 +205,7 @@ const buildQuestion = () => {
 		right,
 		digits,
 		type,
+		difficultyProgress,
 		answer: type.operation === '+' ? left + right : left - right,
 	};
 };
@@ -207,11 +221,13 @@ export class MathQuizController {
 	recognition = undefined;
 	listening = false;
 	comboLevel = 0;
+	completedQuestions = 0;
 
-	constructor({ onCorrect, onWrong, onTimeout }) {
+	constructor({ onCorrect, onWrong, onTimeout, getDifficultyProgress }) {
 		this.onCorrect = onCorrect;
 		this.onWrong = onWrong;
 		this.onTimeout = onTimeout;
+		this.getDifficultyProgress = getDifficultyProgress;
 		this.createElement();
 	}
 
@@ -294,7 +310,11 @@ export class MathQuizController {
 		window.clearTimeout(this.timeoutId);
 		window.clearTimeout(this.nextQuestionId);
 		this.active = true;
-		this.question = buildQuestion();
+		const progress = Math.max(
+			this.completedQuestions / 14,
+			this.getDifficultyProgress?.() ?? 0
+		);
+		this.question = buildQuestion(Math.min(1, progress));
 		this.question.startedAt = performance.now();
 		this.deadline = performance.now() + QUESTION_TIME_LIMIT;
 		this.modeElement.textContent = `${this.question.type.label} - ${this.question.digits} chu so`;
@@ -341,6 +361,8 @@ export class MathQuizController {
 			this.resetCombo();
 			this.onWrong(time, this.question);
 		}
+
+		this.completedQuestions++;
 	};
 
 	resetCombo = () => {

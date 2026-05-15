@@ -13,6 +13,7 @@ import {
 	FighterStruckDelay,
 } from '../constants/fighter.js';
 import { FRAME_TIME, GAME_SPEED } from '../constants/game.js';
+import { HEALTH_MAX_HIT_POINTS } from '../constants/battle.js';
 import { Camera } from '../engine/Camera.js';
 import { EntityList } from '../engine/EntityList.js';
 import { MathQuizController } from '../engine/MathQuizController.js';
@@ -55,6 +56,7 @@ export class BattleScene {
 			onCorrect: this.handleCorrectAnswer,
 			onWrong: this.handleWrongAnswer,
 			onTimeout: this.handleTimeoutAnswer,
+			getDifficultyProgress: this.getDifficultyProgress,
 		});
 	}
 
@@ -131,12 +133,22 @@ export class BattleScene {
 	};
 
 	getMathAttackStrength = (question) => {
+		if (question.comboLevel >= 3) return FighterAttackStrength.HEAVY;
+		if (question.comboLevel >= 2) return FighterAttackStrength.MEDIUM;
 		if (question.digits >= 4) return FighterAttackStrength.HEAVY;
 		if (question.digits >= 2) return FighterAttackStrength.MEDIUM;
 		return FighterAttackStrength.LIGHT;
 	};
 
-	triggerMathAttack = (time, attackerId, question) => {
+	getDifficultyProgress = () => {
+		const lowestHp = Math.min(
+			gameState.fighters[0].hitPoints,
+			gameState.fighters[1].hitPoints
+		);
+		return 1 - Math.max(0, lowestHp) / HEALTH_MAX_HIT_POINTS;
+	};
+
+	triggerMathAttackHit = (time, attackerId, question, index = 0) => {
 		if (this.battleEnded) return;
 
 		const defenderId = 1 - attackerId;
@@ -149,7 +161,10 @@ export class BattleScene {
 		attacker.attackStruck = false;
 		defender.attackStruck = false;
 
-		if (attacker.states[FighterState.MEDIUM_PUNCH].validFrom.includes(attacker.currentState)) {
+		if (
+			index === 0 &&
+			attacker.states[FighterState.MEDIUM_PUNCH].validFrom.includes(attacker.currentState)
+		) {
 			attacker.changeState(FighterState.MEDIUM_PUNCH, time);
 		}
 
@@ -165,6 +180,21 @@ export class BattleScene {
 			FighterAttackType.PUNCH,
 			hitPosition
 		);
+	};
+
+	triggerMathAttack = (time, attackerId, question) => {
+		const comboHits = attackerId === 0 ? Math.max(1, question.comboLevel || 1) : 1;
+
+		for (let index = 0; index < comboHits; index++) {
+			window.setTimeout(() => {
+				this.triggerMathAttackHit(
+					{ ...time, previous: time.previous + index * 180 },
+					attackerId,
+					question,
+					index
+				);
+			}, index * 180);
+		}
 	};
 
 	handleCorrectAnswer = (time, question) => {
