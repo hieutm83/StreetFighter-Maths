@@ -1,5 +1,9 @@
 const QUESTION_TIME_LIMIT = 5000;
 const NEXT_QUESTION_DELAY = 1200;
+const QUICK_ANSWER_LIMIT = 2200;
+const MAX_COMBO_LEVEL = 3;
+const SpeechRecognitionApi =
+	window.SpeechRecognition || window.webkitSpeechRecognition;
 
 const digitRanges = {
 	1: [1, 9],
@@ -17,6 +21,93 @@ const challengeTypes = [
 
 const randomInt = (min, max) =>
 	Math.floor(Math.random() * (max - min + 1)) + min;
+
+const normalizeSpeech = (text) =>
+	text
+		.toLowerCase()
+		.normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.replace(/[.,!?]/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+
+const digitWords = {
+	khong: 0,
+	mot: 1,
+	motj: 1,
+	mots: 1,
+	hai: 2,
+	ba: 3,
+	bon: 4,
+	tu: 4,
+	nam: 5,
+	lam: 5,
+	sau: 6,
+	bay: 7,
+	tam: 8,
+	chin: 9,
+};
+
+const parseUnit = (word) => digitWords[word];
+
+const parseBelowHundred = (tokens) => {
+	const words = tokens.filter(Boolean);
+	if (words.length === 0) return 0;
+	if (words.length === 1) return parseUnit(words[0]);
+
+	if (words[0] === 'muoi') {
+		return 10 + (parseUnit(words[1]) ?? 0);
+	}
+
+	if (words[1] === 'muoi') {
+		return (parseUnit(words[0]) ?? 0) * 10 + (parseUnit(words[2]) ?? 0);
+	}
+
+	if (['linh', 'le'].includes(words[0])) {
+		return parseUnit(words[1]);
+	}
+
+	if (words.length === 2 && parseUnit(words[0]) > 1 && parseUnit(words[1]) === 5) {
+		return parseUnit(words[0]) * 10 + 5;
+	}
+
+	return undefined;
+};
+
+const parseBelowThousand = (tokens) => {
+	const hundredIndex = tokens.indexOf('tram');
+
+	if (hundredIndex === -1) {
+		return parseBelowHundred(tokens);
+	}
+
+	const hundred = parseUnit(tokens[hundredIndex - 1]);
+	if (hundred === undefined) return undefined;
+
+	const rest = parseBelowHundred(tokens.slice(hundredIndex + 1)) ?? 0;
+	return hundred * 100 + rest;
+};
+
+export const parseVietnameseNumber = (text) => {
+	const normalized = normalizeSpeech(text)
+		.replace(/\bngan\b/g, 'nghin')
+		.replace(/\bmuoi\b/g, 'muoi');
+	const numeric = normalized.match(/\d+/);
+
+	if (numeric) return Number(numeric[0]);
+
+	const tokens = normalized.split(' ').filter(Boolean);
+	const thousandIndex = tokens.indexOf('nghin');
+
+	if (thousandIndex !== -1) {
+		const thousand = parseBelowThousand(tokens.slice(0, thousandIndex));
+		const rest = parseBelowThousand(tokens.slice(thousandIndex + 1)) ?? 0;
+		if (thousand === undefined) return undefined;
+		return thousand * 1000 + rest;
+	}
+
+	return parseBelowThousand(tokens);
+};
 
 const getDigits = (number, digits) =>
 	String(number).padStart(digits, '0').split('').map(Number).reverse();
@@ -113,6 +204,9 @@ export class MathQuizController {
 	lastTime = { previous: 0 };
 	timeoutId = undefined;
 	nextQuestionId = undefined;
+	recognition = undefined;
+	listening = false;
+	comboLevel = 0;
 
 	constructor({ onCorrect, onWrong, onTimeout }) {
 		this.onCorrect = onCorrect;
@@ -132,8 +226,10 @@ export class MathQuizController {
 			<div class="math-quiz__question"></div>
 			<form class="math-quiz__form">
 				<input class="math-quiz__answer" type="number" inputmode="numeric" autocomplete="off" aria-label="Dap an" />
+				<button class="math-quiz__voice" type="button" aria-label="Tra loi bang giong noi">Mic</button>
 				<button class="math-quiz__submit" type="submit">Danh</button>
 			</form>
+			<div class="math-quiz__combo">Combo x1</div>
 			<div class="math-quiz__bar"><span></span></div>
 			<div class="math-quiz__feedback"></div>
 		`;
@@ -145,9 +241,53 @@ export class MathQuizController {
 		this.feedbackElement = this.element.querySelector('.math-quiz__feedback');
 		this.timeBarElement = this.element.querySelector('.math-quiz__bar span');
 		this.formElement = this.element.querySelector('.math-quiz__form');
+		this.voiceButton = this.element.querySelector('.math-quiz__voice');
+		this.comboElement = this.element.querySelector('.math-quiz__combo');
 
 		this.formElement.addEventListener('submit', this.handleSubmit);
+		this.voiceButton.addEventListener('click', this.handleVoiceClick);
+		this.setupVoiceRecognition();
 		document.querySelector('main').appendChild(this.element);
+	};
+
+	setupVoiceRecognition = () => {
+		if (!SpeechRecognitionApi) {
+			this.voiceButton.disabled = true;
+			this.voiceButton.textContent = 'No mic';
+			return;
+		}
+
+		this.recognition = new SpeechRecognitionApi();
+		this.recognition.lang = 'vi-VN';
+		this.recognition.continuous = false;
+		this.recognition.interimResults = false;
+
+		this.recognition.onstart = () => {
+			this.listening = true;
+			this.voiceButton.textContent = '...';
+		};
+
+		this.recognition.onend = () => {
+			this.listening = false;
+			this.voiceButton.textContent = 'Mic';
+		};
+
+		this.recognition.onerror = () => {
+			this.feedbackElement.textContent = 'Khong nghe duoc. Hay nhap dap an.';
+		};
+
+		this.recognition.onresult = (event) => {
+			const transcript = event.results[0][0].transcript;
+			const parsed = parseVietnameseNumber(transcript);
+
+			if (parsed === undefined || Number.isNaN(parsed)) {
+				this.feedbackElement.textContent = `Khong hieu "${transcript}".`;
+				return;
+			}
+
+			this.answerElement.value = String(parsed);
+			this.submitAnswer();
+		};
 	};
 
 	startQuestion = (time) => {
@@ -155,13 +295,16 @@ export class MathQuizController {
 		window.clearTimeout(this.nextQuestionId);
 		this.active = true;
 		this.question = buildQuestion();
+		this.question.startedAt = performance.now();
 		this.deadline = performance.now() + QUESTION_TIME_LIMIT;
 		this.modeElement.textContent = `${this.question.type.label} - ${this.question.digits} chu so`;
 		this.questionElement.textContent = `${this.question.left} ${this.question.type.operation} ${this.question.right} = ?`;
 		this.feedbackElement.textContent = '';
 		this.answerElement.value = '';
 		this.answerElement.disabled = false;
+		this.voiceButton.disabled = !SpeechRecognitionApi;
 		this.answerElement.focus();
+		this.updateComboLabel();
 		this.updateTimer(time);
 		this.timeoutId = window.setTimeout(this.handleTimeout, QUESTION_TIME_LIMIT);
 	};
@@ -171,6 +314,7 @@ export class MathQuizController {
 		window.clearTimeout(this.timeoutId);
 		this.active = false;
 		this.answerElement.disabled = true;
+		this.voiceButton.disabled = true;
 		this.feedbackElement.textContent = feedback;
 		this.nextQuestionAt = time.previous + NEXT_QUESTION_DELAY;
 		this.nextQuestionId = window.setTimeout(() => {
@@ -180,12 +324,33 @@ export class MathQuizController {
 		}, NEXT_QUESTION_DELAY);
 
 		if (success) {
+			this.question.responseTime = performance.now() - this.question.startedAt;
+			this.comboLevel =
+				this.question.responseTime <= QUICK_ANSWER_LIMIT
+					? Math.min(MAX_COMBO_LEVEL, this.comboLevel + 1)
+					: 1;
+			this.question.comboLevel = this.comboLevel;
+			this.updateComboLabel();
+			this.feedbackElement.textContent =
+				this.comboLevel > 1 ? `Dung! Combo x${this.comboLevel}.` : feedback;
 			this.onCorrect(time, this.question);
 		} else if (reason === 'timeout') {
+			this.resetCombo();
 			this.onTimeout(time, this.question);
 		} else {
+			this.resetCombo();
 			this.onWrong(time, this.question);
 		}
+	};
+
+	resetCombo = () => {
+		this.comboLevel = 0;
+		this.updateComboLabel();
+	};
+
+	updateComboLabel = () => {
+		this.comboElement.textContent = `Combo x${Math.max(1, this.comboLevel)}`;
+		this.comboElement.dataset.combo = String(Math.max(1, this.comboLevel));
 	};
 
 	handleTimeout = () => {
@@ -200,7 +365,10 @@ export class MathQuizController {
 	handleSubmit = (event) => {
 		event.preventDefault();
 		if (!this.active) return;
+		this.submitAnswer();
+	};
 
+	submitAnswer = () => {
 		const value = Number(this.answerElement.value);
 		const answered = this.answerElement.value.trim() !== '';
 
@@ -211,6 +379,11 @@ export class MathQuizController {
 				? 'Dung! Ban ra don.'
 				: `Sai. Dap an dung la ${this.question.answer}.`
 		);
+	};
+
+	handleVoiceClick = () => {
+		if (!this.active || !this.recognition || this.listening) return;
+		this.recognition.start();
 	};
 
 	updateTimer = (time) => {
@@ -236,7 +409,9 @@ export class MathQuizController {
 	destroy = () => {
 		window.clearTimeout(this.timeoutId);
 		window.clearTimeout(this.nextQuestionId);
+		this.recognition?.abort();
 		this.formElement.removeEventListener('submit', this.handleSubmit);
+		this.voiceButton.removeEventListener('click', this.handleVoiceClick);
 		this.element.remove();
 	};
 }
