@@ -2,17 +2,21 @@ import {
 	SCENE_WIDTH,
 	STAGE_MID_POINT,
 	STAGE_PADDING,
-} from '../constants/Stage.js';
+} from '../constants/stage.js';
 import {
 	FighterAttackBaseData,
+	FighterAttackType,
 	FighterAttackStrength,
+	FighterHurtArea,
 	FighterId,
 	FighterState,
 	FighterStruckDelay,
 } from '../constants/fighter.js';
 import { FRAME_TIME, GAME_SPEED } from '../constants/game.js';
+import { HEALTH_MAX_HIT_POINTS } from '../constants/battle.js';
 import { Camera } from '../engine/Camera.js';
 import { EntityList } from '../engine/EntityList.js';
+import { MathQuizController } from '../engine/MathQuizController.js';
 import { Ken, Ryu } from '../entitites/fighters/index.js';
 import {
 	HeavyHitSplash,
@@ -36,6 +40,7 @@ export class BattleScene {
 	hurtTimer = 0;
 	battleEnded = false;
 	winnerId = undefined;
+	mathQuiz = undefined;
 
 	constructor(changeScene) {
 		this.changeScene = changeScene;
@@ -47,6 +52,12 @@ export class BattleScene {
 		];
 		resetGameState();
 		this.startRound();
+		this.mathQuiz = new MathQuizController({
+			onCorrect: this.handleCorrectAnswer,
+			onWrong: this.handleWrongAnswer,
+			onTimeout: this.handleTimeoutAnswer,
+			getDifficultyProgress: this.getDifficultyProgress,
+		});
 	}
 
 	getFighterClass = (id) => {
@@ -121,6 +132,83 @@ export class BattleScene {
 		this.hurtTimer = time.previous + FighterStruckDelay * FRAME_TIME;
 	};
 
+	getMathAttackStrength = (question) => {
+		if (question.comboLevel >= 3) return FighterAttackStrength.HEAVY;
+		if (question.comboLevel >= 2) return FighterAttackStrength.MEDIUM;
+		if (question.digits >= 4) return FighterAttackStrength.HEAVY;
+		if (question.digits >= 2) return FighterAttackStrength.MEDIUM;
+		return FighterAttackStrength.LIGHT;
+	};
+
+	getDifficultyProgress = () => {
+		const lowestHp = Math.min(
+			gameState.fighters[0].hitPoints,
+			gameState.fighters[1].hitPoints
+		);
+		return 1 - Math.max(0, lowestHp) / HEALTH_MAX_HIT_POINTS;
+	};
+
+	triggerMathAttackHit = (time, attackerId, question, index = 0) => {
+		if (this.battleEnded) return;
+
+		const defenderId = 1 - attackerId;
+		const attacker = this.fighters[attackerId];
+		const defender = this.fighters[defenderId];
+		const strength = this.getMathAttackStrength(question);
+
+		if (!attacker || !defender) return;
+
+		attacker.attackStruck = false;
+		defender.attackStruck = false;
+
+		if (
+			index === 0 &&
+			attacker.states[FighterState.MEDIUM_PUNCH].validFrom.includes(attacker.currentState)
+		) {
+			attacker.changeState(FighterState.MEDIUM_PUNCH, time);
+		}
+
+		const hitPosition = {
+			x: (attacker.position.x + defender.position.x) / 2,
+			y: Math.min(attacker.position.y, defender.position.y) - 54,
+		};
+
+		defender.handleAttackHit(
+			time,
+			strength,
+			FighterHurtArea.BODY,
+			FighterAttackType.PUNCH,
+			hitPosition
+		);
+	};
+
+	triggerMathAttack = (time, attackerId, question) => {
+		const comboHits = attackerId === 0 ? Math.max(1, question.comboLevel || 1) : 1;
+
+		for (let index = 0; index < comboHits; index++) {
+			window.setTimeout(() => {
+				this.triggerMathAttackHit(
+					{ ...time, previous: time.previous + index * 180 },
+					attackerId,
+					question,
+					index
+				);
+			}, index * 180);
+		}
+	};
+
+	handleCorrectAnswer = (time, question) => {
+		this.triggerMathAttack(time, 0, question);
+	};
+
+	handleWrongAnswer = (time, question) => {
+		this.triggerMathAttack(time, 1, question);
+	};
+
+	handleTimeoutAnswer = (time, question) => {
+		this.triggerMathAttack(time, 1, question);
+	};
+
 	updateShadows = (time) => {
 		this.shadows.map((shadow) => shadow.update(time));
 	};
@@ -137,6 +225,8 @@ export class BattleScene {
 	};
 
 	goToStartScene = () => {
+		this.mathQuiz?.destroy();
+		this.mathQuiz = undefined;
 		setTimeout(() => {
 			this.changeScene(StartScene);
 		}, 6000);
@@ -161,6 +251,7 @@ export class BattleScene {
 
 	updateOverlays = (time) => {
 		this.overlays.map((overlay) => overlay.update(time));
+		this.mathQuiz?.update(time);
 	};
 
 	updateFighterHP = (time) => {

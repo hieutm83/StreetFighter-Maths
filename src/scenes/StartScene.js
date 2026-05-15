@@ -1,12 +1,11 @@
-import { SCENE_WIDTH } from '../constants/Stage.js';
+import { SCENE_WIDTH } from '../constants/stage.js';
 import { LOGO_FLASH_DELAY } from '../constants/battle.js';
 import { BattleScene } from './BattleScene.js';
 
 export class StartScene {
-	image = document.getElementById('Controls');
 	logoImg = document.getElementById('Logo');
 
-	text = 'CLICK ANYWHERE TO START';
+	text = 'CLICK ANYWHERE TO START MATH FIGHT';
 	repeatTime = 3;
 	position = 10;
 	logoFlash = false;
@@ -75,8 +74,15 @@ export class StartScene {
 	};
 
 	draw = (context) => {
-		context.drawImage(this.image, 0, 0);
+		context.fillStyle = '#050505';
+		context.fillRect(0, 0, 382, 224);
+		context.fillStyle = '#191919';
+		context.fillRect(0, 128, 382, 96);
 		this.drawLogo(context);
+		context.fillStyle = '#ffffff';
+		context.font = '12px Arial';
+		context.fillText('Solve grade 2 maths to attack', 112, 122);
+		context.fillText('Wrong or slow answers let Ryu strike', 94, 140);
 		this.drawText(context);
 	};
 }

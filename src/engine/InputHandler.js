@@ -192,21 +192,21 @@ export const isKeyPressed = (id, code, forControlHistory) => {
 };
 
 export const isLightPunch = (id, forControlHistory = false) => {
-	return isKeyPressed(id, Control.LIGHT_PUNCH, forControlHistory);
+	return false;
 };
 export const isMediumPunch = (id, forControlHistory = false) => {
-	return isKeyPressed(id, Control.MEDIUM_PUNCH, forControlHistory);
+	return false;
 };
 export const isHeavyPunch = (id, forControlHistory = false) => {
-	return isKeyPressed(id, Control.HEAVY_PUNCH, forControlHistory);
+	return false;
 };
 
 export const isLightKick = (id, forControlHistory = false) => {
-	return isKeyPressed(id, Control.LIGHT_KICK, forControlHistory);
+	return false;
 };
 export const isMediumKick = (id, forControlHistory = false) => {
-	return isKeyPressed(id, Control.MEDIUM_KICK, forControlHistory);
+	return false;
 };
 export const isHeavyKick = (id, forControlHistory = false) => {
-	return isKeyPressed(id, Control.HEAVY_KICK, forControlHistory);
+	return false;
 };
